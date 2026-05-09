@@ -69,8 +69,13 @@ async function trackBatch(token, trackingNumbers) {
 }
 
 async function main() {
+  console.log(`FedEx base URL: ${FEDEX_BASE}`);
+
   // Authenticate with Google Sheets
+  console.log('Step 1: Parsing service account credentials…');
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  console.log(`Service account: ${credentials.client_email}`);
+
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -78,6 +83,7 @@ async function main() {
   const sheets = google.sheets({ version: 'v4', auth });
 
   // Resolve tab name from GID
+  console.log(`Step 2: Reading spreadsheet metadata (ID: ${SHEET_ID})…`);
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const sheetMeta = meta.data.sheets.find(s => s.properties.sheetId === SHEET_GID);
   if (!sheetMeta) throw new Error(`No sheet found with GID ${SHEET_GID}`);
@@ -85,6 +91,7 @@ async function main() {
   console.log(`Tab: "${tabName}"`);
 
   // Read all sheet data
+  console.log(`Step 3: Reading sheet data from tab "${tabName}"…`);
   const readRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `${tabName}!A1:ZZ`,
@@ -128,6 +135,7 @@ async function main() {
   console.log(`Tracking ${toTrack.length} shipment(s)…`);
 
   // Get FedEx access token
+  console.log('Step 4: Getting FedEx access token…');
   const token = await getFedExToken();
   console.log('FedEx token OK');
 
@@ -179,5 +187,6 @@ async function main() {
 
 main().catch(err => {
   console.error('Fatal:', err.message);
+  if (err.stack) console.error(err.stack);
   process.exit(1);
 });
