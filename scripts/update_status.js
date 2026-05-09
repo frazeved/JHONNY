@@ -83,6 +83,9 @@ async function trackBatch(token, trackingNumbers) {
       includeDetailedScans: false,
       trackingInfo: trackingNumbers.map(n => ({
         trackingNumberInfo: { trackingNumber: n },
+        associatedAccountNumber: process.env.FEDEX_ACCOUNT_NUMBER
+          ? { value: process.env.FEDEX_ACCOUNT_NUMBER }
+          : undefined,
       })),
     }),
   });
