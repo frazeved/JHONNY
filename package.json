@@ -1,0 +1,15 @@
+{
+  "name": "jhonny",
+  "version": "1.0.0",
+  "description": "AI agent — fetches FedEx delivery status and writes it to the warehouse Google Sheet",
+  "scripts": {
+    "update": "node scripts/update_status.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
