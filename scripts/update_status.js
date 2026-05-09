@@ -1,9 +1,10 @@
 require('dotenv').config();
 const { google } = require('googleapis');
 
-const SHEET_ID  = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
-const SHEET_GID = 99866922;
-const TAB_NAME  = 'Warehouse Now Database';
+const SHEET_ID         = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
+const SHEET_GID        = 99866922;
+const TAB_NAME         = 'Warehouse Now Database';
+const FEDEX_STATUS_COL = 36; // Column AK (0-based) — hardcoded target column
 
 const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${SHEET_GID}`;
 
@@ -107,12 +108,12 @@ async function main() {
   const awbCol = colIndex(headers,
     'awb', 'tracking number', 'tracking #', 'fedex tracking', 'fedex trk', 'trk#', 'airway'
   );
-  let stsCol = colIndex(headers,
-    'fedex status', 'delivery status', 'fed ex status', 'fedex delivery'
-  );
+  // Always write to column AK — if the header isn't there yet, create it
+  const stsCol = FEDEX_STATUS_COL;
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
+  console.log(`FEDEX STATUS column: ${colLetter(stsCol)} (AK)`);
 
   // Step 2 — Auth Google Sheets (write only)
   console.log('Step 2: Authenticating Google Sheets for writing…');
@@ -127,10 +128,10 @@ async function main() {
   const sheets = google.sheets({ version: 'v4', auth });
   console.log(`Service account: ${credentials.client_email}`);
 
-  // Step 3 — Create FEDEX STATUS column if missing
-  if (stsCol < 0) {
-    stsCol = headers.length;
-    console.log(`Creating FEDEX STATUS header at column ${colLetter(stsCol)}…`);
+  // Step 3 — Ensure FEDEX STATUS header exists in AK
+  const headerAtAK = (headers[stsCol] || '').trim();
+  if (!headerAtAK) {
+    console.log('Creating FEDEX STATUS header in column AK…');
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
       range: `${TAB_NAME}!${colLetter(stsCol)}1`,
@@ -139,7 +140,7 @@ async function main() {
     });
     console.log('Header created');
   } else {
-    console.log(`FEDEX STATUS column: ${colLetter(stsCol)} (index ${stsCol})`);
+    console.log(`Column AK header: "${headerAtAK}"`);
   }
 
   // Step 4 — Collect tracking numbers
