@@ -105,11 +105,10 @@ async function main() {
   const headers = rows[0];
   console.log('Headers:', headers.slice(0, 10).join(' | '));
 
-  const awbCol = colIndex(headers,
-    'tracking number', 'tracking #', 'fedex tracking', 'fedex trk', 'trk#', 'awb', 'airway'
-  );
-  // Always write to column AK — if the header isn't there yet, create it
-  const stsCol = FEDEX_STATUS_COL;
+  const awbCol = colIndex(headers, 'tracking number');
+  // Use DELIVERY STATUS column if it exists, otherwise fall back to hardcoded AK
+  const stsColDynamic = colIndex(headers, 'delivery status', 'fedex status');
+  const stsCol = stsColDynamic >= 0 ? stsColDynamic : FEDEX_STATUS_COL;
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
