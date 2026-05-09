@@ -1,9 +1,6 @@
 name: Update FedEx Status
 
 on:
-  schedule:
-    # Runs every 2 hours (UTC)
-    - cron: '0 */2 * * *'
   workflow_dispatch:
     inputs:
       reason:
