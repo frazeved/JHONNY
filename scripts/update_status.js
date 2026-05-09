@@ -4,8 +4,11 @@ const { google } = require('googleapis');
 const SHEET_ID  = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const SHEET_GID = 99866922;
 
-const FEDEX_OAUTH_URL = 'https://apis.fedex.com/oauth/token';
-const FEDEX_TRACK_URL = 'https://apis.fedex.com/track/v1/trackingnumbers';
+const FEDEX_BASE      = process.env.FEDEX_ENV === 'production'
+  ? 'https://apis.fedex.com'
+  : 'https://apis-sandbox.fedex.com';
+const FEDEX_OAUTH_URL = `${FEDEX_BASE}/oauth/token`;
+const FEDEX_TRACK_URL = `${FEDEX_BASE}/track/v1/trackingnumbers`;
 
 function colIndex(headers, ...keywords) {
   return headers.findIndex(h =>
