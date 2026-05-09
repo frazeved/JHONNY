@@ -74,6 +74,10 @@ async function main() {
   // Authenticate with Google Sheets
   console.log('Step 1: Parsing service account credentials…');
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  // Private key newlines are often escaped as \n when stored in env vars — fix them
+  if (credentials.private_key) {
+    credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+  }
   console.log(`Service account: ${credentials.client_email}`);
 
   const auth = new google.auth.GoogleAuth({
@@ -187,6 +191,7 @@ async function main() {
 
 main().catch(err => {
   console.error('Fatal:', err.message);
+  if (err.response?.data) console.error('API response:', JSON.stringify(err.response.data));
   if (err.stack) console.error(err.stack);
   process.exit(1);
 });
