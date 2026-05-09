@@ -106,7 +106,7 @@ async function main() {
   console.log('Headers:', headers.slice(0, 10).join(' | '));
 
   const awbCol = colIndex(headers,
-    'awb', 'tracking number', 'tracking #', 'fedex tracking', 'fedex trk', 'trk#', 'airway'
+    'tracking number', 'tracking #', 'fedex tracking', 'fedex trk', 'trk#', 'awb', 'airway'
   );
   // Always write to column AK — if the header isn't there yet, create it
   const stsCol = FEDEX_STATUS_COL;
