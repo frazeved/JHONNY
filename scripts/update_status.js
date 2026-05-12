@@ -6,7 +6,7 @@ const SHEET_GID        = 99866922;
 const TAB_NAME         = 'Warehouse Now Database';
 const FEDEX_STATUS_COL = 36; // Column AK (0-based) — hardcoded target column
 
-const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${SHEET_GID}`;
+const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
 const FEDEX_BASE      = process.env.FEDEX_ENV === 'production'
   ? 'https://apis.fedex.com'
