@@ -6,11 +6,11 @@ const ADDRESS_BOOK = {
   SHIP_FROM: {
     company:  '305 Consulting and Production Inc',
     contact:  '305 Consulting and Production Inc',
-    phone:    '',          // TODO: add phone number
-    street:   [],          // TODO: add street address
-    city:     '',          // TODO: add city
-    state:    '',          // TODO: add state code (e.g. FL)
-    zip:      '',          // TODO: add ZIP
+    phone:    '9549333144',
+    street:   ['1800 NW 15TH AVENUE, STE 110', 'UNIT 2 GROUND'],
+    city:     'POMPANO BEACH',
+    state:    'FL',
+    zip:      '33069',
     country:  'US',
   },
 
