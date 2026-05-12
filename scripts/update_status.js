@@ -30,6 +30,14 @@ function colLetter(index) {
   return col;
 }
 
+function normalizeTracking(raw) {
+  if (!raw) return '';
+  let text = String(raw).trim();
+  text = text.replace(/\bAWB\b[:\s-]*/gi, '');
+  text = text.replace(/[^0-9A-Za-z]/g, '');
+  return text;
+}
+
 function parseCSV(text) {
   const rows = [];
   let row = [], field = '', inQ = false;
@@ -148,8 +156,9 @@ async function main() {
   // Step 4 — Collect tracking numbers
   const toTrack = [];
   for (let i = 1; i < rows.length; i++) {
-    const trk = (rows[i][awbCol] || '').trim();
-    if (trk) toTrack.push({ rowIndex: i, tracking: trk });
+    const raw = (rows[i][awbCol] || '').trim();
+    const tracking = normalizeTracking(raw);
+    if (tracking) toTrack.push({ rowIndex: i, raw, tracking });
   }
   if (!toTrack.length) { console.log('No tracking numbers found in sheet'); return; }
   console.log(`Found ${toTrack.length} shipment(s) to track`);
@@ -166,18 +175,39 @@ async function main() {
     console.log(`Tracking batch: ${batch.map(b => b.tracking).join(', ')}`);
     const result = await trackBatch(token, batch.map(b => b.tracking));
 
+    const batchUpdated = new Set();
     for (const item of (result.output?.completeTrackResults || [])) {
-      const entry = batch.find(b => b.tracking === item.trackingNumber);
-      if (!entry) continue;
-      const tr = item.trackResults?.[0];
+      const returnedTracking = normalizeTracking(item.trackingNumber || item.trackingNumberInfo?.trackingNumber || '');
+      const entry = batch.find(b => b.tracking === returnedTracking);
+      if (!entry) {
+        console.log('FedEx returned unknown tracking result:', returnedTracking || item.trackingNumber || item.trackingNumberInfo?.trackingNumber);
+        continue;
+      }
+
+      const tr = item.trackResults?.[0] || item;
       const status = tr?.latestStatusDetail?.statusByLocale
                    || tr?.latestStatusDetail?.description
+                   || tr?.statusDetail?.statusByLocale
+                   || tr?.statusDetail?.description
+                   || tr?.statusCode
+                   || item?.statusCode
                    || 'Unknown';
       const updatedAt = new Date().toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', year: '2-digit',
         hour: '2-digit', minute: '2-digit',
       });
       updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${updatedAt}` });
+      batchUpdated.add(entry.rowIndex);
+    }
+
+    for (const entry of batch) {
+      if (batchUpdated.has(entry.rowIndex)) continue;
+      const updatedAt = new Date().toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+      console.log(`Tracking not found for ${entry.raw}; marking Not Found.`);
+      updates.push({ rowIndex: entry.rowIndex, value: `Not Found · ${updatedAt}` });
     }
   }
 

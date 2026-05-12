@@ -29,5 +29,7 @@ jobs:
         env:
           FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
           FEDEX_API_SECRET: ${{ secrets.FEDEX_API_SECRET }}
+          FEDEX_ACCOUNT_NUMBER: ${{ secrets.FEDEX_ACCOUNT_NUMBER }}
+          FEDEX_ENV: ${{ secrets.FEDEX_ENV }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: node scripts/update_status.js
