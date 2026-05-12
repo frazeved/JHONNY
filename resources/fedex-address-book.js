@@ -6,7 +6,7 @@ const ADDRESS_BOOK = {
   SHIP_FROM: {
     company:  '305 Consulting and Production Inc',
     contact:  '305 Consulting and Production Inc',
-    phone:    '9549333144',
+    phone:    '9174992103',
     street:   ['1800 NW 15TH AVENUE, STE 110', 'UNIT 2 GROUND'],
     city:     'POMPANO BEACH',
     state:    'FL',
