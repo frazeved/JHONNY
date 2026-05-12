@@ -4,7 +4,7 @@ const { google } = require('googleapis');
 const SHEET_ID         = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const SHEET_GID        = 99866922;
 const TAB_NAME         = 'Warehouse Now Database';
-const FEDEX_STATUS_COL = 36; // Column AK (0-based) — hardcoded target column
+const FEDEX_STATUS_COL = 36; // Column AK (0-based) — hardcoded fallback
 
 const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
@@ -13,6 +13,7 @@ const FEDEX_BASE      = process.env.FEDEX_ENV === 'production'
   : 'https://apis-sandbox.fedex.com';
 const FEDEX_OAUTH_URL = `${FEDEX_BASE}/oauth/token`;
 const FEDEX_TRACK_URL = `${FEDEX_BASE}/track/v1/trackingnumbers`;
+const FEDEX_REF_URL   = `${FEDEX_BASE}/track/v1/referencenumbers`;
 
 function colIndex(headers, ...keywords) {
   return headers.findIndex(h =>
@@ -36,6 +37,24 @@ function normalizeTracking(raw) {
   text = text.replace(/\bAWB\b[:\s-]*/gi, '');
   text = text.replace(/[^0-9A-Za-z]/g, '');
   return text;
+}
+
+function nowLabel() {
+  return new Date().toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function extractStatus(item) {
+  const tr = item.trackResults?.[0] || item;
+  return tr?.latestStatusDetail?.statusByLocale
+      || tr?.latestStatusDetail?.description
+      || tr?.statusDetail?.statusByLocale
+      || tr?.statusDetail?.description
+      || tr?.statusCode
+      || item?.statusCode
+      || null;
 }
 
 function parseCSV(text) {
@@ -101,11 +120,41 @@ async function trackBatch(token, trackingNumbers) {
   return res.json();
 }
 
+async function trackByReference(token, po) {
+  const today = new Date();
+  const sixMonthsAgo = new Date(today);
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const fmt = d => d.toISOString().split('T')[0];
+
+  const res = await fetch(FEDEX_REF_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'x-locale': 'en_US',
+    },
+    body: JSON.stringify({
+      referencesInformation: {
+        value: po,
+        type: 'PURCHASE_ORDER',
+        accountNumber: process.env.FEDEX_ACCOUNT_NUMBER || '',
+        shipDateBegin: fmt(sixMonthsAgo),
+        shipDateEnd: fmt(today),
+      },
+    }),
+  });
+  if (!res.ok) {
+    console.log(`  Reference lookup HTTP ${res.status} for PO ${po}`);
+    return null;
+  }
+  return res.json();
+}
+
 async function main() {
   console.log(`FedEx base: ${FEDEX_BASE}`);
   console.log(`Tab: "${TAB_NAME}"`);
 
-  // Step 1 — Read sheet via public CSV (no auth needed)
+  // Step 1 — Read sheet
   console.log('Step 1: Reading sheet CSV…');
   const csvRes = await fetch(CSV_URL);
   if (!csvRes.ok) throw new Error(`CSV fetch failed: ${csvRes.status}`);
@@ -117,15 +166,16 @@ async function main() {
   console.log('Headers:', headers.slice(0, 10).join(' | '));
 
   const awbCol = colIndex(headers, 'tracking number');
-  // Use DELIVERY STATUS column if it exists, otherwise fall back to hardcoded AK
+  const poCol  = colIndex(headers, 'po#', 'po number', 'purchase order');
   const stsColDynamic = colIndex(headers, 'delivery status', 'fedex status');
   const stsCol = stsColDynamic >= 0 ? stsColDynamic : FEDEX_STATUS_COL;
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
-  console.log(`FEDEX STATUS column: ${colLetter(stsCol)} (AK)`);
+  console.log(`PO# column: ${poCol >= 0 ? colLetter(poCol) : 'not found'}`);
+  console.log(`FEDEX STATUS column: ${colLetter(stsCol)}`);
 
-  // Step 2 — Auth Google Sheets (write only)
+  // Step 2 — Auth Google Sheets
   console.log('Step 2: Authenticating Google Sheets for writing…');
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   if (credentials.private_key) {
@@ -138,82 +188,96 @@ async function main() {
   const sheets = google.sheets({ version: 'v4', auth });
   console.log(`Service account: ${credentials.client_email}`);
 
-  // Step 3 — Ensure FEDEX STATUS header exists in AK
+  // Step 3 — Ensure header exists
   const headerAtAK = (headers[stsCol] || '').trim();
   if (!headerAtAK) {
-    console.log('Creating FEDEX STATUS header in column AK…');
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
       range: `${TAB_NAME}!${colLetter(stsCol)}1`,
       valueInputOption: 'RAW',
-      requestBody: { values: [['FEDEX STATUS']] },
+      requestBody: { values: [['DELIVERY STATUS']] },
     });
-    console.log('Header created');
+    console.log('Header "DELIVERY STATUS" created');
   } else {
-    console.log(`Column AK header: "${headerAtAK}"`);
+    console.log(`Column ${colLetter(stsCol)} header: "${headerAtAK}"`);
   }
 
-  // Step 4 — Collect tracking numbers
-  const toTrack = [];
+  // Step 4 — Separate rows: has tracking vs needs reference search
+  const toTrack   = []; // rows with a tracking number
+  const refQueue  = []; // rows with no tracking — search by PO#
+
   for (let i = 1; i < rows.length; i++) {
-    const raw = (rows[i][awbCol] || '').trim();
+    const raw      = (rows[i][awbCol] || '').trim();
     const tracking = normalizeTracking(raw);
-    if (tracking) toTrack.push({ rowIndex: i, raw, tracking });
-  }
-  if (!toTrack.length) { console.log('No tracking numbers found in sheet'); return; }
-  console.log(`Found ${toTrack.length} shipment(s) to track`);
+    const po       = poCol >= 0 ? (rows[i][poCol] || '').trim() : '';
 
-  // Step 5 — FedEx tracking
+    if (tracking) {
+      toTrack.push({ rowIndex: i, raw, tracking, po });
+    } else if (po) {
+      refQueue.push({ rowIndex: i, po });
+    }
+  }
+  console.log(`Found ${toTrack.length} with tracking, ${refQueue.length} with PO# only`);
+
   const token = await getFedExToken();
   console.log('FedEx token OK');
 
-  const BATCH = 30;
   const updates = [];
 
+  // Step 5 — Track by tracking number (batches of 30)
+  const BATCH = 30;
   for (let i = 0; i < toTrack.length; i += BATCH) {
     const batch = toTrack.slice(i, i + BATCH);
-    console.log(`Tracking batch: ${batch.map(b => b.tracking).join(', ')}`);
+    console.log(`Tracking batch ${Math.floor(i/BATCH)+1}: ${batch.length} numbers`);
     const result = await trackBatch(token, batch.map(b => b.tracking));
 
     const batchUpdated = new Set();
     for (const item of (result.output?.completeTrackResults || [])) {
       const returnedTracking = normalizeTracking(item.trackingNumber || item.trackingNumberInfo?.trackingNumber || '');
       const entry = batch.find(b => b.tracking === returnedTracking);
-      if (!entry) {
-        console.log('FedEx returned unknown tracking result:', returnedTracking || item.trackingNumber || item.trackingNumberInfo?.trackingNumber);
-        continue;
-      }
+      if (!entry) continue;
 
-      const tr = item.trackResults?.[0] || item;
-      const status = tr?.latestStatusDetail?.statusByLocale
-                   || tr?.latestStatusDetail?.description
-                   || tr?.statusDetail?.statusByLocale
-                   || tr?.statusDetail?.description
-                   || tr?.statusCode
-                   || item?.statusCode
-                   || 'Unknown';
-      const updatedAt = new Date().toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', year: '2-digit',
-        hour: '2-digit', minute: '2-digit',
-      });
-      updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${updatedAt}` });
-      batchUpdated.add(entry.rowIndex);
+      const status = extractStatus(item);
+      if (status) {
+        updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${nowLabel()}` });
+        batchUpdated.add(entry.rowIndex);
+      }
     }
 
+    // Tracking number returned no result — queue for reference search
     for (const entry of batch) {
-      if (batchUpdated.has(entry.rowIndex)) continue;
-      const updatedAt = new Date().toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', year: '2-digit',
-        hour: '2-digit', minute: '2-digit',
-      });
-      console.log(`Tracking not found for ${entry.raw}; marking Not Found.`);
-      updates.push({ rowIndex: entry.rowIndex, value: `Not Found · ${updatedAt}` });
+      if (!batchUpdated.has(entry.rowIndex)) {
+        console.log(`  No result for tracking ${entry.raw} — queuing PO# ${entry.po} for reference search`);
+        if (entry.po) refQueue.push({ rowIndex: entry.rowIndex, po: entry.po });
+        else updates.push({ rowIndex: entry.rowIndex, value: `Not Found · ${nowLabel()}` });
+      }
+    }
+  }
+
+  // Step 6 — Reference search by PO# for all queued rows
+  if (refQueue.length) {
+    console.log(`Step 6: Reference search for ${refQueue.length} PO(s)…`);
+    for (const entry of refQueue) {
+      console.log(`  Searching PO# ${entry.po}…`);
+      const result = await trackByReference(token, entry.po);
+      const trackResults = result?.output?.completeTrackResults || [];
+
+      if (trackResults.length > 0) {
+        const status = extractStatus(trackResults[0]);
+        if (status) {
+          console.log(`  Found: ${status}`);
+          updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${nowLabel()}` });
+          continue;
+        }
+      }
+      console.log(`  Not found via reference`);
+      updates.push({ rowIndex: entry.rowIndex, value: `Not Found · ${nowLabel()}` });
     }
   }
 
   if (!updates.length) { console.log('No status updates from FedEx'); return; }
 
-  // Step 6 — Write statuses back
+  // Step 7 — Write back to sheet
   console.log(`Writing ${updates.length} status update(s) to sheet…`);
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SHEET_ID,
