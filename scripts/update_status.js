@@ -46,6 +46,28 @@ function nowLabel() {
   });
 }
 
+function extractEventDate(item) {
+  const tr = item.trackResults?.[0] || item;
+  const dates = tr?.dateAndTimes || [];
+  const priority = ['ACTUAL_DELIVERY', 'ESTIMATED_DELIVERY', 'ACTUAL_TENDER', 'SHIP'];
+  for (const type of priority) {
+    const entry = dates.find(d => d.type === type);
+    if (entry?.dateTime) {
+      return new Date(entry.dateTime).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+    }
+  }
+  if (dates.length > 0 && dates[0].dateTime) {
+    return new Date(dates[0].dateTime).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+  return nowLabel();
+}
+
 function extractStatus(item) {
   const tr = item.trackResults?.[0] || item;
   return tr?.latestStatusDetail?.statusByLocale
@@ -239,7 +261,7 @@ async function main() {
 
       const status = extractStatus(item);
       if (status) {
-        updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${nowLabel()}` });
+        updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}` });
         batchUpdated.add(entry.rowIndex);
       }
     }
@@ -266,7 +288,7 @@ async function main() {
         const status = extractStatus(trackResults[0]);
         if (status) {
           console.log(`  Found: ${status}`);
-          updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${nowLabel()}` });
+          updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(trackResults[0])}` });
           continue;
         }
       }
