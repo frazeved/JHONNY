@@ -62,57 +62,62 @@ async function createLabelWeb(page, { po, to, boxes }) {
     if (await line2.count()) await line2.fill(to.street[1]);
   }
 
-  // ZIP — triggers city/state auto-fill
+  // ZIP — auto-fills CITY and STATE dropdowns
   await page.getByLabel('ZIP CODE').fill(to.zip);
   await page.keyboard.press('Tab');
-  await page.waitForTimeout(1500);
-
-  // Verify city filled; fill manually if not
-  const cityInput = page.getByLabel('CITY');
-  if (await cityInput.count() && !(await cityInput.inputValue())) {
-    await cityInput.fill(to.city);
-  }
+  await page.waitForTimeout(2000);
+  console.log('  ZIP entered — city/state should auto-fill');
 
   // ── Service: FedEx Ground ────────────────────────────────────────────────────
-  // Click SERVICE dropdown trigger
-  const serviceDropdown = page.locator('[id*="service"], [name*="service"], label:has-text("SERVICE")').last();
-  await serviceDropdown.locator('..').locator('..').click().catch(async () => {
-    await page.locator('text=SERVICE').locator('..').click();
-  });
-  await page.waitForTimeout(500);
-  await page.getByRole('option', { name: /fedex ground/i }).first().click().catch(async () => {
-    await page.locator('text=FedEx Ground').first().click();
-  });
-  await page.waitForTimeout(500);
+  // The template pre-selects FedEx Ground; verify and select if needed
+  const serviceLabel = page.getByLabel('SERVICE');
+  const serviceVal = await serviceLabel.inputValue().catch(() => '');
+  if (!serviceVal.toLowerCase().includes('ground')) {
+    await serviceLabel.click();
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /fedex ground/i }).first().click()
+      .catch(() => page.locator('text=FedEx Ground').first().click());
+    await page.waitForTimeout(500);
+  }
 
   // ── Package details ──────────────────────────────────────────────────────────
+  // Set package count
   const packagesInput = page.getByLabel('PACKAGES');
-  await packagesInput.fill('');
+  await packagesInput.triple_click().catch(() => packagesInput.click());
   await packagesInput.fill(String(boxes));
   await page.keyboard.press('Tab');
 
+  // Weight — template may already have 20 lb; overwrite to be safe
   const weightInput = page.getByLabel('WEIGHT');
-  await weightInput.fill('');
+  await weightInput.click();
+  await weightInput.selectAll().catch(() => {});
+  await page.keyboard.press('Control+a');
   await weightInput.fill(String(WEIGHT_LB));
+
+  // Dimensions — three adjacent inputs after WEIGHT, no unique labels
+  // Tab from weight through each dim input
+  await weightInput.press('Tab');
+  await page.keyboard.type(String(DEFAULT_DIMS.l));
+  await page.keyboard.press('Tab');
+  await page.keyboard.type(String(DEFAULT_DIMS.w));
+  await page.keyboard.press('Tab');
+  await page.keyboard.type(String(DEFAULT_DIMS.h));
   await page.keyboard.press('Tab');
 
-  // Dimensions L × W × H
-  const dimL = page.locator('input[placeholder="L"]').first();
-  const dimW = page.locator('input[placeholder="W"]').first();
-  const dimH = page.locator('input[placeholder="H"]').first();
-  await dimL.fill(String(DEFAULT_DIMS.l));
-  await dimW.fill(String(DEFAULT_DIMS.w));
-  await dimH.fill(String(DEFAULT_DIMS.h));
-  await page.keyboard.press('Tab');
-
-  // ── Shipment reference = PO number ──────────────────────────────────────────
+  // ── Shipment references ──────────────────────────────────────────────────────
+  // Check "Add shipment references" if not already checked
   const refCheckbox = page.getByLabel('Add shipment references');
-  if (await refCheckbox.count() && !(await refCheckbox.isChecked())) {
-    await refCheckbox.check();
-    await page.waitForTimeout(500);
+  if (await refCheckbox.count()) {
+    if (!(await refCheckbox.isChecked())) {
+      await refCheckbox.check();
+      await page.waitForTimeout(600);
+    }
+    // Fill SHIPMENT REFERENCE and P.O. NO.
+    const shipRef = page.getByLabel('SHIPMENT REFERENCE');
+    if (await shipRef.count()) { await shipRef.fill(''); await shipRef.fill(po); }
+    const poNo = page.getByLabel('P.O. NO.');
+    if (await poNo.count()) { await poNo.fill(''); await poNo.fill(po); }
   }
-  const refInput = page.getByPlaceholder('Reference').first();
-  if (await refInput.count()) await refInput.fill(`PO#${po}`);
 
   // ── FINALIZE ─────────────────────────────────────────────────────────────────
   await page.locator('button:has-text("FINALIZE")').click();
@@ -120,13 +125,14 @@ async function createLabelWeb(page, { po, to, boxes }) {
   await page.waitForSelector('text=Shipment created successfully', { timeout: 20000 });
 
   // ── Extract tracking + cost ──────────────────────────────────────────────────
-  const tracking = await page.locator('text=Tracking ID').locator('..').locator('a').first().textContent()
-    .then(t => t.trim()).catch(() => '');
+  const tracking = await page.locator('text=Tracking ID').locator('..').locator('a').first()
+    .textContent().then(t => t.trim()).catch(() => '');
 
   const costRaw = await page.locator('text=Estimated total cost').locator('..').textContent()
     .catch(() => '');
   const costMatch = costRaw.match(/\$([\d.]+)/);
   const cost = costMatch ? costMatch[1] : '';
+  console.log(`  Tracking: ${tracking} | Cost: $${cost}`);
 
   // ── Download label PDF ───────────────────────────────────────────────────────
   const [download] = await Promise.all([
@@ -217,7 +223,7 @@ async function run() {
   if (!poRows.length) { console.log('No matching POs found.'); return; }
   console.log(`Processing ${poRows.length} PO(s): ${poRows.map(r => r.po).join(', ')}`);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: process.env.SHOW !== '1', slowMo: process.env.SHOW === '1' ? 400 : 0 });
   const context = await browser.newContext({ acceptDownloads: true });
   const page    = await context.newPage();
 
