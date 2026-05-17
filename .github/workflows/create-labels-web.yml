@@ -1,0 +1,38 @@
+name: Create FedEx Labels (Web)
+
+on:
+  workflow_dispatch:
+    inputs:
+      po_numbers:
+        description: 'Comma-separated PO numbers to generate labels for'
+        required: true
+        type: string
+
+jobs:
+  create-labels-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Create FedEx labels via web
+        env:
+          FEDEX_WEB_USER:              ${{ secrets.FEDEX_WEB_USER }}
+          FEDEX_WEB_PASSWORD:          ${{ secrets.FEDEX_WEB_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_APPS_SCRIPT_URL:      ${{ secrets.GDRIVE_APPS_SCRIPT_URL }}
+          GDRIVE_APPS_SCRIPT_SECRET:   ${{ secrets.GDRIVE_APPS_SCRIPT_SECRET }}
+          PO_NUMBERS:                  ${{ github.event.inputs.po_numbers }}
+        run: node scripts/create_labels_web.js
