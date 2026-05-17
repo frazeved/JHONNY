@@ -23,6 +23,10 @@ function colLetter(i) {
   return col;
 }
 
+function currentMonth() {
+  return new Date().toLocaleString('en-US', { month: 'long' }).toUpperCase();
+}
+
 async function getFedExToken() {
   const res = await fetch(`${FEDEX_BASE}/oauth/token`, {
     method: 'POST',
@@ -76,12 +80,12 @@ async function createShipment(token, { po, to, boxes, dims }) {
   return data;
 }
 
-async function uploadToAppsScript(pdfBase64, filename) {
+async function uploadToAppsScript(pdfBase64, filename, month) {
   const scriptUrl    = process.env.GDRIVE_APPS_SCRIPT_URL;
   const scriptSecret = process.env.GDRIVE_APPS_SCRIPT_SECRET;
   if (!scriptUrl) throw new Error('GDRIVE_APPS_SCRIPT_URL not set');
 
-  const body = JSON.stringify({ secret: scriptSecret, pdf: pdfBase64, filename, folderId: FEDEX_FOLDER_ID });
+  const body = JSON.stringify({ secret: scriptSecret, pdf: pdfBase64, filename, folderId: FEDEX_FOLDER_ID, month });
   const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, redirect: 'manual' };
   let resp = await fetch(scriptUrl, opts);
   let hops = 0;
@@ -100,7 +104,7 @@ async function uploadToAppsScript(pdfBase64, filename) {
   const auth  = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive.readonly'] });
   const drive = google.drive({ version: 'v3', auth });
   const r = await drive.files.list({
-    q: `name='${filename}' and '${FEDEX_FOLDER_ID}' in parents and trashed=false`,
+    q: `name='${filename}' and trashed=false`,
     fields: 'files(id,webViewLink)',
     supportsAllDrives: true, includeItemsFromAllDrives: true,
   });
@@ -113,7 +117,6 @@ async function run() {
     ? process.env.PO_NUMBERS.split(',').map(p => p.trim()).filter(Boolean)
     : null;
 
-  // Read sheet
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   const auth   = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
   const sheets = google.sheets({ version: 'v4', auth });
@@ -129,9 +132,14 @@ async function run() {
     boxes:    colIndex(H, 'box', 'carton', 'ctns', 'ctn qty'),
     fxLink:   colIndex(H, 'fedex label link', 'fedex link'),
     style:    colIndex(H, 'style#', 'style'),
+    shipType: colIndex(H, 'shipping type'),
+    carrier:  colIndex(H, 'carrier'),
+    tracking: colIndex(H, 'tracking #', 'tracking number', 'tracking no'),
+    cost:     colIndex(H, 'shipping cost', 'freight cost'),
+    fxCheck:  colIndex(H, '🏷️', 'fedex label 🏷'),
   };
 
-  console.log('Columns:', Object.entries(C).map(([k,v]) => `${k}=${colLetter(v)}`).join(' | '));
+  console.log('Columns:', Object.entries(C).map(([k,v]) => `${k}=${v >= 0 ? colLetter(v) : 'N/A'}`).join(' | '));
 
   let lastStyle = '';
   const poRows = [];
@@ -152,6 +160,9 @@ async function run() {
   const token = await getFedExToken();
   console.log('FedEx token OK');
 
+  const month = currentMonth();
+  console.log(`Saving to folder: ${month}`);
+
   let ok = 0, fail = 0;
   const updates = [];
 
@@ -166,9 +177,13 @@ async function run() {
       console.log(`  Ship To: ${shipToCode} (${to.city}, ${to.state}) | Boxes: ${boxCount}`);
 
       const data = await createShipment(token, { po, to, boxes: boxCount, dims: DEFAULT_DIMS });
-      const shipment  = data.output?.transactionShipments?.[0];
-      const tracking  = shipment?.masterTrackingNumber;
+      const shipment = data.output?.transactionShipments?.[0];
+      const tracking = shipment?.masterTrackingNumber;
       console.log(`  Tracking: ${tracking}`);
+
+      // Extract shipping cost
+      const rateDetails = shipment?.completedShipmentDetail?.shipmentRating?.shipmentRateDetails;
+      const shippingCost = rateDetails?.[0]?.totalNetCharge?.amount ?? '';
 
       // Collect all label PDFs (one per box)
       const pieces = shipment?.pieceResponses || [];
@@ -184,14 +199,14 @@ async function run() {
       // Upload each label; store first link in sheet
       let firstLink = null;
       for (let b = 0; b < labelBuffers.length; b++) {
-        const filename  = labelBuffers.length === 1 ? `FEDEX ${po}.pdf` : `FEDEX ${po} BOX${b+1}.pdf`;
-        const b64       = labelBuffers[b].toString('base64');
-        const link      = await uploadToAppsScript(b64, filename);
+        const filename = labelBuffers.length === 1 ? `FDEX ${po}.pdf` : `FDEX ${po} BOX${b+1}.pdf`;
+        const b64      = labelBuffers[b].toString('base64');
+        const link     = await uploadToAppsScript(b64, filename, month);
         console.log(`  Uploaded: ${filename} → ${link}`);
         if (b === 0) firstLink = link;
       }
 
-      updates.push({ rowIndex, po, link: firstLink });
+      updates.push({ rowIndex, po, link: firstLink, tracking, shippingCost });
       ok++;
     } catch (err) {
       console.error(`  FAILED: ${err.message}`);
@@ -199,17 +214,24 @@ async function run() {
     }
   }
 
-  // Write links back to sheet
-  if (updates.length && C.fxLink >= 0) {
-    const data = updates.map(u => ({
-      range: `${TAB_NAME}!${colLetter(C.fxLink)}${u.rowIndex}`,
-      values: [[u.link]],
-    }));
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: SHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data },
-    });
-    console.log(`\nSheet updated for ${updates.length} PO(s)`);
+  // Write all columns back to sheet
+  if (updates.length) {
+    const data = [];
+    for (const u of updates) {
+      if (C.fxLink >= 0)   data.push({ range: `${TAB_NAME}!${colLetter(C.fxLink)}${u.rowIndex}`,   values: [[u.link]] });
+      if (C.shipType >= 0) data.push({ range: `${TAB_NAME}!${colLetter(C.shipType)}${u.rowIndex}`, values: [['FEDEX GROUND']] });
+      if (C.carrier >= 0)  data.push({ range: `${TAB_NAME}!${colLetter(C.carrier)}${u.rowIndex}`,  values: [['FEDEX']] });
+      if (C.tracking >= 0) data.push({ range: `${TAB_NAME}!${colLetter(C.tracking)}${u.rowIndex}`, values: [[u.tracking || '']] });
+      if (C.cost >= 0)     data.push({ range: `${TAB_NAME}!${colLetter(C.cost)}${u.rowIndex}`,     values: [[u.shippingCost]] });
+      if (C.fxCheck >= 0)  data.push({ range: `${TAB_NAME}!${colLetter(C.fxCheck)}${u.rowIndex}`,  values: [['✅']] });
+    }
+    if (data.length) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data },
+      });
+      console.log(`\nSheet updated for ${updates.length} PO(s)`);
+    }
   }
 
   console.log(`\n=== Done: ${ok} label(s) created, ${fail} failed ===`);
