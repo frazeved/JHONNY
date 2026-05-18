@@ -2,12 +2,10 @@
 // Polls the workspace for pending print jobs and sends them to the correct printer.
 // Keep this terminal window open while the team is printing.
 
-require('dotenv').config();
 const https = require('https');
 const fs    = require('fs');
 const os    = require('os');
 const path  = require('path');
-const { google } = require('googleapis');
 const { print } = require('pdf-to-printer');
 
 const WORKSPACE_URL = 'https://workspace305team.onrender.com';
@@ -19,21 +17,16 @@ const PRINTERS = {
   'pl-print':    'Brother HL-L6200DW series Printer',
 };
 
-async function downloadFromDrive(link, dest) {
-  const match = link.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (!match) throw new Error('Invalid Drive link: ' + link);
-  const fileId = match[1];
-
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  const auth  = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive.readonly'] });
-  const drive = google.drive({ version: 'v3', auth });
-  const res   = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
-
+// Download PDF through the Render server's pdf-proxy (no local credentials needed)
+function downloadPDF(link, dest) {
+  const url = `${WORKSPACE_URL}/api/pdf-proxy?link=${encodeURIComponent(link)}`;
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    res.data.pipe(file);
-    file.on('finish', () => file.close(resolve));
-    file.on('error', reject);
+    https.get(url, res => {
+      if (res.statusCode !== 200) { reject(new Error('HTTP ' + res.statusCode)); return; }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', reject);
   });
 }
 
