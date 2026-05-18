@@ -1,12 +1,13 @@
 // fill-links.js
-// Scans Drive folders for AL, PL, FedEx and Invoice files, matches by PO# in filename,
-// fills PO LINK / PL LINK / FEDEX LABEL LINK / INVOICE LINK columns in the sheet (skips if already filled).
+// Scans Drive folders for PO, AL, PL, FedEx and Invoice files, matches by PO# in filename,
+// fills PO LINK / AL LINK / PL LINK / FEDEX LABEL LINK / INVOICE LINK columns in the sheet (skips if already filled).
 
 require('dotenv').config();
 const { google } = require('googleapis');
 
 const SHEET_ID     = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const TAB_NAME     = 'Warehouse Now Database';
+const PO_FOLDER      = '1E_VSIJItfiaOSVLjzWALkUCS_kTo9XDb';
 const AL_PL_FOLDER   = '1k4k8EpLdhw4EyUvQMn35ZwiRgvqsniJq';
 const FEDEX_FOLDER   = '1ufkdrO23m2C-MrmhR1iKN3QFSJFwuQPY';
 const INVOICE_FOLDER = '1r1qElg8MpRatZQ-kBBFSYJQUhIl1V1mQ';
@@ -20,9 +21,9 @@ function colLetter(i) {
   return col;
 }
 
-// Extract PO# — first numeric sequence of 5–8 digits in the filename
+// Extract PO# — first 5–8 digit sequence not surrounded by other digits
 function extractPO(filename) {
-  const m = filename.match(/\b(\d{5,8})\b/);
+  const m = filename.match(/(?<!\d)(\d{5,8})(?!\d)/);
   return m ? m[1] : null;
 }
 
@@ -77,15 +78,16 @@ async function main() {
   const H = rows[0].map(h => (h || '').trim());
   const C = {
     po:      colIndex(H, 'po#', 'po number'),
-    alLink:  colIndex(H, 'po link', 'al link', 'anthro label link'),
+    poLink:  colIndex(H, 'po link'),
+    alLink:  colIndex(H, 'al link', 'anthro label link'),
     plLink:  colIndex(H, 'pl link', 'packing list link'),
     fxLink:  colIndex(H, 'fedex label link', 'fedex link'),
     alCheck: colIndex(H, 'anthro label 🏷️', 'anthro label 🏷'),
     plCheck: colIndex(H, 'packing list'),
-    fxCheck:  colIndex(H, 'fedex label 🏷️', 'fedex label 🏷'),
-    invLink:  colIndex(H, 'invoice link'),
+    fxCheck: colIndex(H, 'fedex label 🏷️', 'fedex label 🏷'),
+    invLink: colIndex(H, 'invoice link'),
   };
-  console.log(`Columns: PO=${colLetter(C.po)} | PO LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | INVOICE LINK=${colLetter(C.invLink)}`);
+  console.log(`Columns: PO#=${colLetter(C.po)} | PO LINK=${colLetter(C.poLink)} | AL LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | INVOICE LINK=${colLetter(C.invLink)}`);
 
   const get = (row, i) => i >= 0 ? (row[i] || '').trim() : '';
 
@@ -98,6 +100,10 @@ async function main() {
   console.log(`${Object.keys(poMap).length} POs in sheet`);
 
   // ── Scan Drive folders ────────────────────────────────────────────────────────
+  console.log('Scanning PO folder…');
+  const poFiles = await listFiles(drive, PO_FOLDER);
+  console.log(`  ${poFiles.length} files found`);
+
   console.log('Scanning AL/PL folder…');
   const alPlFiles = await listFiles(drive, AL_PL_FOLDER);
   console.log(`  ${alPlFiles.length} files found`);
@@ -111,6 +117,17 @@ async function main() {
   console.log(`  ${invFiles.length} files found`);
 
   const updates = [];
+
+  for (const file of poFiles) {
+    const po = extractPO(file.name);
+    if (!po || !poMap[po]) continue;
+    const { rowIndex, row } = poMap[po];
+    if (C.poLink >= 0 && !get(row, C.poLink)) {
+      updates.push({ range: `${TAB_NAME}!${colLetter(C.poLink)}${rowIndex}`, values: [[file.webViewLink]] });
+      row[C.poLink] = file.webViewLink;
+      console.log(`  PO  PO ${po} ← ${file.name}`);
+    }
+  }
 
   for (const file of alPlFiles) {
     const po = extractPO(file.name);
