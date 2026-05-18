@@ -65,7 +65,7 @@ async function processJob(job) {
   const tmp = path.join(os.tmpdir(), `print_${job.id}.pdf`);
   try {
     process.stdout.write(`  Downloading ${job.po || job.id} → ${printer} … `);
-    await downloadFromDrive(job.link, tmp);
+    await downloadPDF(job.link, tmp);
     await print(tmp, { printer });
     console.log('done');
   } finally {
