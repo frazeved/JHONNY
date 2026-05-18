@@ -1,14 +1,15 @@
 // fill-links.js
-// Scans Drive folders for AL, PL and FedEx files, matches by PO# in filename,
-// fills PO LINK / PL LINK / FEDEX LABEL LINK columns in the sheet (skips if already filled).
+// Scans Drive folders for AL, PL, FedEx and Invoice files, matches by PO# in filename,
+// fills PO LINK / PL LINK / FEDEX LABEL LINK / INVOICE LINK columns in the sheet (skips if already filled).
 
 require('dotenv').config();
 const { google } = require('googleapis');
 
 const SHEET_ID     = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const TAB_NAME     = 'Warehouse Now Database';
-const AL_PL_FOLDER = '1k4k8EpLdhw4EyUvQMn35ZwiRgvqsniJq';
-const FEDEX_FOLDER = '1ufkdrO23m2C-MrmhR1iKN3QFSJFwuQPY';
+const AL_PL_FOLDER   = '1k4k8EpLdhw4EyUvQMn35ZwiRgvqsniJq';
+const FEDEX_FOLDER   = '1ufkdrO23m2C-MrmhR1iKN3QFSJFwuQPY';
+const INVOICE_FOLDER = '1r1qElg8MpRatZQ-kBBFSYJQUhIl1V1mQ';
 
 function colIndex(headers, ...keys) {
   return headers.findIndex(h => keys.some(k => h.toLowerCase().includes(k.toLowerCase())));
@@ -81,9 +82,10 @@ async function main() {
     fxLink:  colIndex(H, 'fedex label link', 'fedex link'),
     alCheck: colIndex(H, 'anthro label 🏷️', 'anthro label 🏷'),
     plCheck: colIndex(H, 'packing list'),
-    fxCheck: colIndex(H, 'fedex label 🏷️', 'fedex label 🏷'),
+    fxCheck:  colIndex(H, 'fedex label 🏷️', 'fedex label 🏷'),
+    invLink:  colIndex(H, 'invoice link'),
   };
-  console.log(`Columns: PO=${colLetter(C.po)} | PO LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)}`);
+  console.log(`Columns: PO=${colLetter(C.po)} | PO LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | INVOICE LINK=${colLetter(C.invLink)}`);
 
   const get = (row, i) => i >= 0 ? (row[i] || '').trim() : '';
 
@@ -103,6 +105,10 @@ async function main() {
   console.log('Scanning FedEx folder…');
   const fxFiles = await listFiles(drive, FEDEX_FOLDER);
   console.log(`  ${fxFiles.length} files found`);
+
+  console.log('Scanning Invoice folder…');
+  const invFiles = await listFiles(drive, INVOICE_FOLDER);
+  console.log(`  ${invFiles.length} files found`);
 
   const updates = [];
 
@@ -133,6 +139,17 @@ async function main() {
       row[C.fxLink] = file.webViewLink;
       if (C.fxCheck >= 0) updates.push({ range: `${TAB_NAME}!${colLetter(C.fxCheck)}${rowIndex}`, values: [['✅']] });
       console.log(`  FX  PO ${po} ← ${file.name}`);
+    }
+  }
+
+  for (const file of invFiles) {
+    const po = extractPO(file.name);
+    if (!po || !poMap[po]) continue;
+    const { rowIndex, row } = poMap[po];
+    if (C.invLink >= 0 && !get(row, C.invLink)) {
+      updates.push({ range: `${TAB_NAME}!${colLetter(C.invLink)}${rowIndex}`, values: [[file.webViewLink]] });
+      row[C.invLink] = file.webViewLink;
+      console.log(`  INV PO ${po} ← ${file.name}`);
     }
   }
 
