@@ -10,10 +10,12 @@ const TAB_NAME = 'Warehouse Now Database';
 
 const TO      = 'invoices@urbanout.com';
 const CC      = [
-  'logistics@creativetwotwelve.com',
-  'rafaela.neves@farmrio.com',
-  'ozan.guruscu@creativetwotwelve.com',
-  'paula@creativetwotwelve.com',
+  'support@creativetwotwelve.com',       // Flavio Azevedo
+  'logistics@creativetwotwelve.com',     // Eduardo Moraes
+  'inspection@creativetwotwelve.com',    // Julian Fajardo
+  'paula@creativetwotwelve.com',         // Paula Erthal
+  'rafaela.neves@farmrio.com',           // Rafaela Neves
+  'ozan.guruscu@creativetwotwelve.com',  // Ozan Guruscu
 ].join(', ');
 
 const SIGNATURE = `\nBest regards,\nEduardo Moraes\nLogistics Team\n305 CONSULTING AND PRODUCTION\n1800 NW 15TH Avenue, Suite 110\nPompano Beach, Florida 33069`;
