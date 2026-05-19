@@ -1,9 +1,10 @@
 require('dotenv').config();
-const { google } = require('googleapis');
-const nodemailer  = require('nodemailer');
-const path        = require('path');
-const fs          = require('fs');
-const os          = require('os');
+const { google }   = require('googleapis');
+const nodemailer   = require('nodemailer');
+const { ImapFlow } = require('imapflow');
+const path         = require('path');
+const fs           = require('fs');
+const os           = require('os');
 
 const SHEET_ID = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const TAB_NAME = 'Warehouse Now Database';
@@ -134,13 +135,9 @@ async function run() {
 
   const body = `Invoices are attached to this email for your records. Below are the tracking details for the respective PO numbers:\n\n${trackingLines}${SIGNATURE}`;
 
-  // 4. Send email
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.GMAIL_FROM, pass: process.env.GMAIL_APP_PASSWORD },
-  });
-
-  await transporter.sendMail({
+  // 4. Build raw MIME message
+  const builder = nodemailer.createTransport({ streamTransport: true, newline: 'unix', buffer: true });
+  const info = await builder.sendMail({
     from:        `Eduardo Moraes <${process.env.GMAIL_FROM}>`,
     to:          TO,
     cc:          CC,
@@ -149,8 +146,22 @@ async function run() {
     attachments,
   });
 
-  console.log(`\nEmail sent to ${TO} (CC: ${CC})`);
+  // 5. Save to Gmail Drafts via IMAP
+  const imap = new ImapFlow({
+    host:   'imap.gmail.com',
+    port:   993,
+    secure: true,
+    auth:   { user: process.env.GMAIL_FROM, pass: process.env.GMAIL_APP_PASSWORD },
+    logger: false,
+  });
+
+  await imap.connect();
+  await imap.append('[Gmail]/Drafts', info.message, ['\\Draft', '\\Seen']);
+  await imap.logout();
+
+  console.log(`\nDraft saved to Gmail Drafts folder`);
   console.log(`Subject: ${subject}`);
+  console.log(`To: ${TO} | CC: ${CC}`);
   console.log(`Attachments: ${attachments.map(a => a.filename).join(', ') || 'none'}`);
 
   // Cleanup
