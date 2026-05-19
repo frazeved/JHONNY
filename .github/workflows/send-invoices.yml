@@ -1,0 +1,33 @@
+name: Send Invoice Emails
+
+on:
+  workflow_dispatch:
+    inputs:
+      po_numbers:
+        description: 'PO numbers to email (comma-separated, e.g. 6946550,6946551,6946552)'
+        required: true
+        type: string
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Send invoice emails
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GMAIL_FROM: ${{ secrets.GMAIL_FROM }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PO_NUMBERS: ${{ github.event.inputs.po_numbers }}
+        run: node scripts/send-invoices.js
