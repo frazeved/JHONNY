@@ -272,9 +272,10 @@ async function main() {
   const token = await getFedExToken();
   console.log('FedEx token OK');
 
-  const updates      = []; // delivery status text
-  const delivUpdates = []; // delivery date (ACTUAL_DELIVERY)
-  const pickupUpdates = []; // pickup date (ACTUAL_TENDER / SHIP)
+  const updates       = []; // delivery status text
+  const delivUpdates  = []; // delivery date (ACTUAL_DELIVERY)
+  const pickupUpdates = []; // pickup date
+  let dateTypesLogged = false; // log date types from first result once
 
   // Step 5 — Track by tracking number (batches of 30)
   const BATCH = 30;
@@ -293,8 +294,17 @@ async function main() {
       if (status) {
         updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}` });
         batchUpdated.add(entry.rowIndex);
+
+        // Log available date types from first result to diagnose pickup date
+        if (!dateTypesLogged) {
+          const tr = item.trackResults?.[0] || item;
+          const types = (tr?.dateAndTimes || []).map(d => `${d.type}=${d.dateTime}`);
+          console.log(`  Date types in first result: ${types.join(' | ') || 'none'}`);
+          dateTypesLogged = true;
+        }
+
         const delivDate  = extractSpecificDate(item, 'ACTUAL_DELIVERY');
-        const pickupDate = extractSpecificDate(item, 'ACTUAL_TENDER', 'SHIP');
+        const pickupDate = extractSpecificDate(item, 'ACTUAL_TENDER', 'SHIP', 'ACTUAL_PICKUP', 'SHIP_DATE');
         if (delivDate  && delivDateCol   >= 0) delivUpdates.push({ rowIndex: entry.rowIndex, value: delivDate });
         if (pickupDate && shippedDateCol >= 0) pickupUpdates.push({ rowIndex: entry.rowIndex, value: pickupDate });
       }
@@ -335,6 +345,7 @@ async function main() {
     }
   }
 
+  console.log(`Updates collected — status: ${updates.length}, delivery: ${delivUpdates.length}, pickup: ${pickupUpdates.length}`);
   if (!updates.length) { console.log('No status updates from FedEx'); return; }
 
   // Step 7 — Write back to sheet (status + delivery date + pickup date)
