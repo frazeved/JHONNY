@@ -216,14 +216,15 @@ async function main() {
   const stsColDynamic = colIndex(headers, 'delivery status', 'fedex status');
   const stsCol = stsColDynamic >= 0 ? stsColDynamic : FEDEX_STATUS_COL;
   const delivDateCol   = colIndex(headers, 'delivery date');
-  const shippedDateCol = colIndex(headers, 'fedex pick up', 'fedex pickup', 'shipped date');
+  let shippedDateCol   = colIndex(headers, 'fedex pick up', 'fedex pickup');
+  if (shippedDateCol < 0) shippedDateCol = colIndex(headers, 'shipped date');
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
   console.log(`PO# column: ${poCol >= 0 ? colLetter(poCol) : 'not found'}`);
   console.log(`FEDEX STATUS column: ${colLetter(stsCol)}`);
-  console.log(`DELIVERY DATE column: ${delivDateCol >= 0 ? colLetter(delivDateCol) : 'not found'}`);
-  console.log(`SHIPPED DATE column:  ${shippedDateCol >= 0 ? colLetter(shippedDateCol) : 'not found'}`);
+  console.log(`DELIVERY DATE column: ${delivDateCol >= 0 ? `${colLetter(delivDateCol)} ("${headers[delivDateCol]}")` : 'not found'}`);
+  console.log(`PICKUP DATE column:   ${shippedDateCol >= 0 ? `${colLetter(shippedDateCol)} ("${headers[shippedDateCol]}")` : 'not found'}`);
 
   // Step 2 — Auth Google Sheets
   console.log('Step 2: Authenticating Google Sheets for writing…');
