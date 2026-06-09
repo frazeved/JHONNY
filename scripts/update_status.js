@@ -134,7 +134,7 @@ async function getFedExToken() {
   return data.access_token;
 }
 
-async function trackBatch(token, trackingNumbers) {
+async function trackBatch(token, trackingNumbers, attempt = 1) {
   const res = await fetch(FEDEX_TRACK_URL, {
     method: 'POST',
     headers: {
@@ -152,7 +152,17 @@ async function trackBatch(token, trackingNumbers) {
       })),
     }),
   });
-  if (!res.ok) throw new Error(`FedEx Track failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    // Retry once on 503 / service unavailable after a short wait
+    if ((res.status === 503 || res.status === 429) && attempt < 3) {
+      const wait = attempt * 10000;
+      console.log(`  FedEx ${res.status} — retrying in ${wait/1000}s (attempt ${attempt}/3)…`);
+      await new Promise(r => setTimeout(r, wait));
+      return trackBatch(token, trackingNumbers, attempt + 1);
+    }
+    throw new Error(`FedEx Track failed: ${res.status} ${body}`);
+  }
   return res.json();
 }
 
@@ -206,7 +216,7 @@ async function main() {
   const stsColDynamic = colIndex(headers, 'delivery status', 'fedex status');
   const stsCol = stsColDynamic >= 0 ? stsColDynamic : FEDEX_STATUS_COL;
   const delivDateCol   = colIndex(headers, 'delivery date');
-  const shippedDateCol = colIndex(headers, 'shipped date');
+  const shippedDateCol = colIndex(headers, 'fedex pick up', 'fedex pickup', 'shipped date');
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
