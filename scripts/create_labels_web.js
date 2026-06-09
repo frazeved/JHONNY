@@ -25,6 +25,13 @@ function currentMonth() {
   return new Date().toLocaleString('en-US', { month: 'long' }).toUpperCase();
 }
 
+async function dismissCookieBanner(page) {
+  await page.evaluate(() => {
+    const el = document.getElementById('usercentrics-cmp-ui');
+    if (el) el.remove();
+  });
+}
+
 async function login(page) {
   console.log('  Navigating to FedEx Shipping Plus...');
   await page.goto('https://www.fedex.com/shippingplus/en-us/shipment/create', {
@@ -32,12 +39,17 @@ async function login(page) {
   });
   await page.waitForTimeout(2000);
 
-  if (!page.url().includes('shippingplus')) {
+  if (page.url().includes('login')) {
     console.log('  Login page detected, signing in...');
-    await page.waitForSelector('input[name="userid"], #userId, input[type="text"]', { timeout: 15000 });
-    await page.locator('input[name="userid"], #userId, input[type="text"]').first().fill(process.env.FEDEX_WEB_USER);
-    await page.locator('input[type="password"]').fill(process.env.FEDEX_WEB_PASSWORD);
-    await page.locator('button:has-text("LOG IN"), input[value="LOG IN"]').click();
+    const pwdInput = page.locator('input[type="password"]');
+    await pwdInput.waitFor({ state: 'visible', timeout: 25000 });
+    await page.waitForTimeout(800);
+    await page.evaluate(() => { const el = document.getElementById('usercentrics-cmp-ui'); if (el) el.remove(); });
+    // FedEx login: id="username", id="password", id="login_button"
+    await page.locator('#username').fill(process.env.FEDEX_WEB_USER);
+    await pwdInput.click({ force: true });
+    await pwdInput.fill(process.env.FEDEX_WEB_PASSWORD);
+    await page.locator('#login_button').click();
     await page.waitForURL('**/shippingplus/**', { timeout: 30000 });
     console.log('  Logged in OK');
   } else {
@@ -51,6 +63,7 @@ async function createLabelWeb(page, { po, to, boxes }) {
   });
   await page.waitForSelector('text=Create shipment', { timeout: 20000 });
   await page.waitForTimeout(2000);
+  await dismissCookieBanner(page);
 
   // ── Deliver To ──────────────────────────────────────────────────────────────
   await page.getByLabel('CONTACT NAME').fill(to.contact);
