@@ -79,6 +79,20 @@ function extractStatus(item) {
       || null;
 }
 
+function extractSpecificDate(item, ...types) {
+  const tr = item.trackResults?.[0] || item;
+  const dates = tr?.dateAndTimes || [];
+  for (const type of types) {
+    const entry = dates.find(d => d.type === type);
+    if (entry?.dateTime) {
+      return new Date(entry.dateTime).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: '2-digit',
+      });
+    }
+  }
+  return null;
+}
+
 function parseCSV(text) {
   const rows = [];
   let row = [], field = '', inQ = false;
@@ -191,11 +205,15 @@ async function main() {
   const poCol  = colIndex(headers, 'po#', 'po number', 'purchase order');
   const stsColDynamic = colIndex(headers, 'delivery status', 'fedex status');
   const stsCol = stsColDynamic >= 0 ? stsColDynamic : FEDEX_STATUS_COL;
+  const delivDateCol   = colIndex(headers, 'delivery date');
+  const shippedDateCol = colIndex(headers, 'shipped date');
 
   if (awbCol < 0) throw new Error('AWB/Tracking column not found. Headers: ' + headers.join(' | '));
   console.log(`AWB column: ${colLetter(awbCol)} (index ${awbCol})`);
   console.log(`PO# column: ${poCol >= 0 ? colLetter(poCol) : 'not found'}`);
   console.log(`FEDEX STATUS column: ${colLetter(stsCol)}`);
+  console.log(`DELIVERY DATE column: ${delivDateCol >= 0 ? colLetter(delivDateCol) : 'not found'}`);
+  console.log(`SHIPPED DATE column:  ${shippedDateCol >= 0 ? colLetter(shippedDateCol) : 'not found'}`);
 
   // Step 2 — Auth Google Sheets
   console.log('Step 2: Authenticating Google Sheets for writing…');
@@ -244,7 +262,9 @@ async function main() {
   const token = await getFedExToken();
   console.log('FedEx token OK');
 
-  const updates = [];
+  const updates      = []; // delivery status text
+  const delivUpdates = []; // delivery date (ACTUAL_DELIVERY)
+  const pickupUpdates = []; // pickup date (ACTUAL_TENDER / SHIP)
 
   // Step 5 — Track by tracking number (batches of 30)
   const BATCH = 30;
@@ -263,6 +283,10 @@ async function main() {
       if (status) {
         updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}` });
         batchUpdated.add(entry.rowIndex);
+        const delivDate  = extractSpecificDate(item, 'ACTUAL_DELIVERY');
+        const pickupDate = extractSpecificDate(item, 'ACTUAL_TENDER', 'SHIP');
+        if (delivDate  && delivDateCol   >= 0) delivUpdates.push({ rowIndex: entry.rowIndex, value: delivDate });
+        if (pickupDate && shippedDateCol >= 0) pickupUpdates.push({ rowIndex: entry.rowIndex, value: pickupDate });
       }
     }
 
@@ -289,6 +313,10 @@ async function main() {
         if (status) {
           console.log(`  Found: ${status}`);
           updates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(trackResults[0])}` });
+          const delivDate  = extractSpecificDate(trackResults[0], 'ACTUAL_DELIVERY');
+          const pickupDate = extractSpecificDate(trackResults[0], 'ACTUAL_TENDER', 'SHIP');
+          if (delivDate  && delivDateCol   >= 0) delivUpdates.push({ rowIndex: entry.rowIndex, value: delivDate });
+          if (pickupDate && shippedDateCol >= 0) pickupUpdates.push({ rowIndex: entry.rowIndex, value: pickupDate });
           continue;
         }
       }
@@ -299,20 +327,28 @@ async function main() {
 
   if (!updates.length) { console.log('No status updates from FedEx'); return; }
 
-  // Step 7 — Write back to sheet
-  console.log(`Writing ${updates.length} status update(s) to sheet…`);
+  // Step 7 — Write back to sheet (status + delivery date + pickup date)
+  console.log(`Writing ${updates.length} status, ${delivUpdates.length} delivery date, ${pickupUpdates.length} pickup date update(s)…`);
+  const allWrites = [
+    ...updates.map(u => ({
+      range: `${TAB_NAME}!${colLetter(stsCol)}${u.rowIndex + 1}`,
+      values: [[u.value]],
+    })),
+    ...delivUpdates.map(u => ({
+      range: `${TAB_NAME}!${colLetter(delivDateCol)}${u.rowIndex + 1}`,
+      values: [[u.value]],
+    })),
+    ...pickupUpdates.map(u => ({
+      range: `${TAB_NAME}!${colLetter(shippedDateCol)}${u.rowIndex + 1}`,
+      values: [[u.value]],
+    })),
+  ];
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: updates.map(u => ({
-        range: `${TAB_NAME}!${colLetter(stsCol)}${u.rowIndex + 1}`,
-        values: [[u.value]],
-      })),
-    },
+    requestBody: { valueInputOption: 'RAW', data: allWrites },
   });
 
-  console.log(`✓ Done — updated ${updates.length} FedEx status(es)`);
+  console.log(`✓ Done — ${updates.length} status, ${delivUpdates.length} delivery date, ${pickupUpdates.length} pickup date written`);
 }
 
 main().catch(err => {
