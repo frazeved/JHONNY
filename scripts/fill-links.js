@@ -82,9 +82,9 @@ async function main() {
     alLink:  colIndex(H, 'al link', 'anthro label link'),
     plLink:  colIndex(H, 'pl link', 'packing list link'),
     fxLink:  colIndex(H, 'fedex label link', 'fedex link'),
-    alCheck: colIndex(H, 'anthro label 🏷️', 'anthro label 🏷'),
-    plCheck: colIndex(H, 'packing list'),
-    fxCheck: colIndex(H, 'fedex label 🏷️', 'fedex label 🏷'),
+    alCheck: H.findIndex(h => h.toLowerCase().includes('anthro label') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
+    plCheck: H.findIndex(h => h.toLowerCase().includes('packing list') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
+    fxCheck: H.findIndex(h => h.toLowerCase().includes('fedex label') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
     invLink: colIndex(H, 'invoice link'),
   };
   console.log(`Columns: PO#=${colLetter(C.po)} | PO LINK=${colLetter(C.poLink)} | AL LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | INVOICE LINK=${colLetter(C.invLink)}`);
@@ -160,6 +160,8 @@ async function main() {
   }
 
   for (const file of invFiles) {
+    const up = file.name.toUpperCase();
+    if (up.includes('FEDEX') || up.startsWith('AL ') || up.startsWith('AL_') || up.startsWith('PL ') || up.startsWith('PL_') || up.includes('PACK')) continue;
     const po = extractPO(file.name);
     if (!po || !poMap[po]) continue;
     const { rowIndex, row } = poMap[po];
