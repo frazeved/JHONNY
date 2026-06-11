@@ -386,7 +386,7 @@ async function main() {
   const pRows    = pResp.data.values || [];
   const pHeaders = (pRows[0] || []).map(h => String(h).trim());
   const pTrackI  = pHeaders.findIndex(h => h.toUpperCase().includes('TRACKING'));
-  const pStatusI = pHeaders.findIndex(h => h.toUpperCase() === 'STATUS');
+  const pStatusI = pHeaders.findIndex(h => h.toUpperCase() === 'FEDEX STATUS');
 
   if (pTrackI < 0 || pStatusI < 0) {
     console.log(`  Paul: TRACKING col=${pTrackI}, STATUS col=${pStatusI} — skipping`);
