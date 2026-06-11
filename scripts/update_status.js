@@ -385,8 +385,9 @@ async function main() {
   });
   const pRows    = pResp.data.values || [];
   const pHeaders = (pRows[0] || []).map(h => String(h).trim());
-  const pTrackI  = pHeaders.findIndex(h => h.toUpperCase().includes('TRACKING'));
-  const pStatusI = pHeaders.findIndex(h => h.toUpperCase() === 'FEDEX STATUS');
+  const pTrackI    = pHeaders.findIndex(h => h.toUpperCase().includes('TRACKING'));
+  const pStatusI   = pHeaders.findIndex(h => h.toUpperCase() === 'FEDEX STATUS');
+  const pShipDateI = pHeaders.findIndex(h => h.toUpperCase() === 'SHIP DATE');
 
   if (pTrackI < 0) { console.log('  Paul: TRACKING column not found — skipping'); return; }
   if (pRows.length < 2) { console.log('  Paul sheet has no data rows'); return; }
@@ -394,7 +395,7 @@ async function main() {
   // Auto-create FEDEX STATUS header if missing
   let statusCol = pStatusI;
   if (statusCol < 0) {
-    statusCol = pHeaders.length; // append after last existing column
+    statusCol = pHeaders.length;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
       range: `'${paulTabName}'!${colLetter(statusCol)}1`,
@@ -404,40 +405,60 @@ async function main() {
     console.log(`  Paul: created FEDEX STATUS header at column ${colLetter(statusCol)}`);
   }
 
-  const paulToTrack = [];
+  // Build tracking → [rowIndex, ...] map so duplicate tracking rows all get updated
+  const paulTrackMap = {};
   for (let i = 1; i < pRows.length; i++) {
     const trk = normalizeTracking((pRows[i][pTrackI] || '').trim());
-    if (trk) paulToTrack.push({ rowIndex: i, tracking: trk });
+    if (!trk) continue;
+    if (!paulTrackMap[trk]) paulTrackMap[trk] = [];
+    paulTrackMap[trk].push(i);
   }
-  console.log(`  ${paulToTrack.length} Paul rows with tracking numbers`);
-  if (!paulToTrack.length) return;
+  const uniqueTrackings = Object.keys(paulTrackMap);
+  console.log(`  ${uniqueTrackings.length} unique tracking numbers in Paul sheet`);
+  if (!uniqueTrackings.length) return;
 
-  const paulUpdates = [];
-  for (let i = 0; i < paulToTrack.length; i += BATCH) {
-    const batch  = paulToTrack.slice(i, i + BATCH);
-    const result = await trackBatch(token, batch.map(b => b.tracking));
+  const paulStatusUpdates   = [];
+  const paulShipDateUpdates = [];
+
+  for (let i = 0; i < uniqueTrackings.length; i += BATCH) {
+    const batchTrks = uniqueTrackings.slice(i, i + BATCH);
+    const result = await trackBatch(token, batchTrks);
     for (const item of (result.output?.completeTrackResults || [])) {
-      const rt    = normalizeTracking(item.trackingNumber || item.trackingNumberInfo?.trackingNumber || '');
-      const entry = batch.find(b => b.tracking === rt);
-      if (!entry) continue;
-      const status = extractStatus(item);
-      if (status) paulUpdates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}`, col: statusCol });
+      const rt = normalizeTracking(item.trackingNumber || item.trackingNumberInfo?.trackingNumber || '');
+      const rowIndices = paulTrackMap[rt];
+      if (!rowIndices) continue;
+      const status   = extractStatus(item);
+      const pickDate = extractSpecificDate(item, 'ACTUAL_TENDER', 'SHIP', 'ACTUAL_PICKUP', 'SHIP_DATE');
+      if (status) {
+        const statusVal = `${status} · ${extractEventDate(item)}`;
+        for (const ri of rowIndices) {
+          paulStatusUpdates.push({ rowIndex: ri, value: statusVal, col: statusCol });
+          if (pickDate && pShipDateI >= 0) {
+            paulShipDateUpdates.push({ rowIndex: ri, value: pickDate, col: pShipDateI });
+          }
+        }
+      }
     }
   }
 
-  if (!paulUpdates.length) { console.log('  Paul: no status updates from FedEx'); return; }
+  const allPaulWrites = [
+    ...paulStatusUpdates.map(u => ({
+      range: `'${paulTabName}'!${colLetter(u.col)}${u.rowIndex + 1}`,
+      values: [[u.value]],
+    })),
+    ...paulShipDateUpdates.map(u => ({
+      range: `'${paulTabName}'!${colLetter(u.col)}${u.rowIndex + 1}`,
+      values: [[u.value]],
+    })),
+  ];
+
+  if (!allPaulWrites.length) { console.log('  Paul: no status updates from FedEx'); return; }
 
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: paulUpdates.map(u => ({
-        range: `'${paulTabName}'!${colLetter(u.col)}${u.rowIndex + 1}`,
-        values: [[u.value]],
-      })),
-    },
+    requestBody: { valueInputOption: 'RAW', data: allPaulWrites },
   });
-  console.log(`  ✓ Paul: ${paulUpdates.length} status values written`);
+  console.log(`  ✓ Paul: ${paulStatusUpdates.length} status + ${paulShipDateUpdates.length} ship date written`);
 }
 
 main().catch(err => {
