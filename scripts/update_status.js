@@ -388,11 +388,21 @@ async function main() {
   const pTrackI  = pHeaders.findIndex(h => h.toUpperCase().includes('TRACKING'));
   const pStatusI = pHeaders.findIndex(h => h.toUpperCase() === 'FEDEX STATUS');
 
-  if (pTrackI < 0 || pStatusI < 0) {
-    console.log(`  Paul: TRACKING col=${pTrackI}, STATUS col=${pStatusI} — skipping`);
-    return;
-  }
+  if (pTrackI < 0) { console.log('  Paul: TRACKING column not found — skipping'); return; }
   if (pRows.length < 2) { console.log('  Paul sheet has no data rows'); return; }
+
+  // Auto-create FEDEX STATUS header if missing
+  let statusCol = pStatusI;
+  if (statusCol < 0) {
+    statusCol = pHeaders.length; // append after last existing column
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${paulTabName}'!${colLetter(statusCol)}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['FEDEX STATUS']] },
+    });
+    console.log(`  Paul: created FEDEX STATUS header at column ${colLetter(statusCol)}`);
+  }
 
   const paulToTrack = [];
   for (let i = 1; i < pRows.length; i++) {
@@ -411,7 +421,7 @@ async function main() {
       const entry = batch.find(b => b.tracking === rt);
       if (!entry) continue;
       const status = extractStatus(item);
-      if (status) paulUpdates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}` });
+      if (status) paulUpdates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}`, col: statusCol });
     }
   }
 
@@ -422,7 +432,7 @@ async function main() {
     requestBody: {
       valueInputOption: 'RAW',
       data: paulUpdates.map(u => ({
-        range: `'${paulTabName}'!${colLetter(pStatusI)}${u.rowIndex + 1}`,
+        range: `'${paulTabName}'!${colLetter(u.col)}${u.rowIndex + 1}`,
         values: [[u.value]],
       })),
     },
