@@ -371,6 +371,63 @@ async function main() {
   });
 
   console.log(`✓ Done — ${updates.length} status, ${delivUpdates.length} delivery date, ${pickupUpdates.length} pickup date written`);
+
+  // ─── Paul: SAMPLE DATABASE NEW status refresh ──────────────────────────────
+  console.log('\nStep 8: Updating Paul SAMPLE DATABASE NEW…');
+  const PAUL_GID = 1659676838;
+  const paulMeta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties' });
+  const paulSampleSheet = paulMeta.data.sheets.find(s => s.properties.sheetId === PAUL_GID);
+  if (!paulSampleSheet) { console.log('  Paul tab not found (gid 1659676838)'); return; }
+
+  const paulTabName = paulSampleSheet.properties.title;
+  const pResp = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID, range: `'${paulTabName}'`, valueRenderOption: 'FORMATTED_VALUE',
+  });
+  const pRows    = pResp.data.values || [];
+  const pHeaders = (pRows[0] || []).map(h => String(h).trim());
+  const pTrackI  = pHeaders.findIndex(h => h.toUpperCase().includes('TRACKING'));
+  const pStatusI = pHeaders.findIndex(h => h.toUpperCase() === 'STATUS');
+
+  if (pTrackI < 0 || pStatusI < 0) {
+    console.log(`  Paul: TRACKING col=${pTrackI}, STATUS col=${pStatusI} — skipping`);
+    return;
+  }
+  if (pRows.length < 2) { console.log('  Paul sheet has no data rows'); return; }
+
+  const paulToTrack = [];
+  for (let i = 1; i < pRows.length; i++) {
+    const trk = normalizeTracking((pRows[i][pTrackI] || '').trim());
+    if (trk) paulToTrack.push({ rowIndex: i, tracking: trk });
+  }
+  console.log(`  ${paulToTrack.length} Paul rows with tracking numbers`);
+  if (!paulToTrack.length) return;
+
+  const paulUpdates = [];
+  for (let i = 0; i < paulToTrack.length; i += BATCH) {
+    const batch  = paulToTrack.slice(i, i + BATCH);
+    const result = await trackBatch(token, batch.map(b => b.tracking));
+    for (const item of (result.output?.completeTrackResults || [])) {
+      const rt    = normalizeTracking(item.trackingNumber || item.trackingNumberInfo?.trackingNumber || '');
+      const entry = batch.find(b => b.tracking === rt);
+      if (!entry) continue;
+      const status = extractStatus(item);
+      if (status) paulUpdates.push({ rowIndex: entry.rowIndex, value: `${status} · ${extractEventDate(item)}` });
+    }
+  }
+
+  if (!paulUpdates.length) { console.log('  Paul: no status updates from FedEx'); return; }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: paulUpdates.map(u => ({
+        range: `'${paulTabName}'!${colLetter(pStatusI)}${u.rowIndex + 1}`,
+        values: [[u.value]],
+      })),
+    },
+  });
+  console.log(`  ✓ Paul: ${paulUpdates.length} status values written`);
 }
 
 main().catch(err => {
