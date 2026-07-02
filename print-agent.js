@@ -3,6 +3,7 @@
 // Keep this terminal window open while the team is printing.
 
 const https    = require('https');
+const net      = require('net');
 const fs       = require('fs');
 const os       = require('os');
 const path     = require('path');
@@ -19,6 +20,24 @@ const PRINTERS = {
   'al-print':    '305 LABEL PRINTER',
   'pl-print':    'Brother HL-L6200DW series Printer',
 };
+
+// Raw TCP (port 9100) targets for ZPL — FedEx labels are native ZPL and must go
+// to the thermal printer's firmware directly, NOT through SumatraPDF (which is PDF-only).
+const RAW_PRINTERS = {
+  '305 LABEL PRINTER': { host: '10.1.10.42', port: 9100 },
+};
+
+// Send raw bytes (a ZPL buffer) straight to a networked thermal printer's raw port
+function sendRawToPrinter(buf, printerName) {
+  const dest = RAW_PRINTERS[printerName];
+  if (!dest) return Promise.reject(new Error(`No raw host configured for "${printerName}"`));
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(dest.port, dest.host, () => sock.write(buf, () => sock.end()));
+    sock.on('close', resolve);
+    sock.on('error', reject);
+    sock.setTimeout(15000, () => { sock.destroy(); reject(new Error('printer socket timeout')); });
+  });
+}
 
 // Download PDF through the Render server's pdf-proxy (no local credentials needed)
 function downloadPDF(link, dest) {
@@ -81,6 +100,15 @@ async function processJob(job) {
     process.stdout.write(`  Downloading ${job.po || job.id} → ${printer} … `);
     await downloadPDF(job.link, tmp);
 
+    // FedEx labels are native ZPL (start with ^XA) — send raw to the thermal printer's
+    // firmware over TCP 9100. No SumatraPDF, no rotation (STOCK_4X6 is already portrait 4x6).
+    const head = fs.readFileSync(tmp).slice(0, 3).toString('latin1');
+    if (head.startsWith('^XA') && RAW_PRINTERS[printer]) {
+      await sendRawToPrinter(fs.readFileSync(tmp), printer);
+      console.log('done (ZPL raw)');
+      return;
+    }
+
     if (job.type === 'al-print' || job.type === 'fedex-print') {
       // Rotate landscape PDF 270° so it prints correctly on portrait 4x6 stock
       const rotated = tmp.replace('.pdf', '_r.pdf');
@@ -120,10 +148,11 @@ async function poll() {
 }
 
 console.log('');
-console.log('  305 Print Agent  v4');
+console.log('  305 Print Agent  v5');
 console.log('  ─────────────────────────────────────────');
-console.log('  FedEx / AL Labels  →  305 LABEL PRINTER  (rotate 270 + noscale)');
-console.log('  Packing Lists      →  Brother HL-L6200DW  (duplex)');
+console.log('  FedEx ZPL labels   ->  305 LABEL PRINTER  (raw TCP 9100)');
+console.log('  AL Labels          ->  305 LABEL PRINTER  (rotate 270 + noscale)');
+console.log('  Packing Lists      ->  Brother HL-L6200DW  (duplex)');
 console.log('  Polling workspace every 2s. Keep this window open.');
 console.log('');
 
