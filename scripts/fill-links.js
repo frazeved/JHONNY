@@ -82,12 +82,13 @@ async function main() {
     alLink:  colIndex(H, 'al link', 'anthro label link'),
     plLink:  colIndex(H, 'pl link', 'packing list link'),
     fxLink:  colIndex(H, 'fedex label link', 'fedex link'),
+    fxZpl:   colIndex(H, 'fedex label zpl'),
     alCheck: H.findIndex(h => h.toLowerCase().includes('anthro label') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
     plCheck: H.findIndex(h => h.toLowerCase().includes('packing list') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
     fxCheck: H.findIndex(h => h.toLowerCase().includes('fedex label') && !h.toLowerCase().includes('link') && !h.toLowerCase().includes('printed')),
     invLink: colIndex(H, 'invoice link'),
   };
-  console.log(`Columns: PO#=${colLetter(C.po)} | PO LINK=${colLetter(C.poLink)} | AL LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | INVOICE LINK=${colLetter(C.invLink)}`);
+  console.log(`Columns: PO#=${colLetter(C.po)} | PO LINK=${colLetter(C.poLink)} | AL LINK=${colLetter(C.alLink)} | PL LINK=${colLetter(C.plLink)} | FEDEX LABEL LINK=${colLetter(C.fxLink)} | FEDEX LABEL ZPL=${colLetter(C.fxZpl)} | INVOICE LINK=${colLetter(C.invLink)}`);
 
   const get = (row, i) => i >= 0 ? (row[i] || '').trim() : '';
 
@@ -147,14 +148,36 @@ async function main() {
     }
   }
 
-  for (const file of fxFiles) {
+  // The FedEx folder holds two files per PO: the raw ZPL ("ZPL {po}.zpl" → FEDEX LABEL ZPL,
+  // for the thermal printer) and the PDF ("FEDEX {po}.pdf" → FEDEX LABEL LINK, viewable).
+  // Route each file to its own column. Prefer the combined file ("ZPL {po}.zpl") over the
+  // per-box variants ("ZPL {po} - N.zpl") so the stored link prints every box.
+  const perBox = n => / - \d+\.[a-z]+$/i.test(n);       // "…- 2.zpl" ranks after the combined file
+  const fxSorted = [...fxFiles].sort((a, b) => (perBox(a.name) ? 1 : 0) - (perBox(b.name) ? 1 : 0) || a.name.localeCompare(b.name));
+  const markFxCheck = (row, rowIndex) => {
+    if (C.fxCheck >= 0 && !get(row, C.fxCheck)) {
+      updates.push({ range: `${TAB_NAME}!${colLetter(C.fxCheck)}${rowIndex}`, values: [['✅']] });
+      row[C.fxCheck] = '✅';
+    }
+  };
+  for (const file of fxSorted) {
     const po = extractPO(file.name);
     if (!po || !poMap[po]) continue;
     const { rowIndex, row } = poMap[po];
-    if (C.fxLink >= 0 && !get(row, C.fxLink)) {
+    const isZpl = /\.zpl$/i.test(file.name) || file.name.toUpperCase().startsWith('ZPL ');
+    if (isZpl) {
+      // raw ZPL → FEDEX LABEL ZPL column
+      if (C.fxZpl >= 0 && !get(row, C.fxZpl)) {
+        updates.push({ range: `${TAB_NAME}!${colLetter(C.fxZpl)}${rowIndex}`, values: [[file.webViewLink]] });
+        row[C.fxZpl] = file.webViewLink;
+        markFxCheck(row, rowIndex);
+        console.log(`  ZPL PO ${po} ← ${file.name}`);
+      }
+    } else if (C.fxLink >= 0 && !get(row, C.fxLink)) {
+      // PDF → FEDEX LABEL LINK column
       updates.push({ range: `${TAB_NAME}!${colLetter(C.fxLink)}${rowIndex}`, values: [[file.webViewLink]] });
       row[C.fxLink] = file.webViewLink;
-      if (C.fxCheck >= 0) updates.push({ range: `${TAB_NAME}!${colLetter(C.fxCheck)}${rowIndex}`, values: [['✅']] });
+      markFxCheck(row, rowIndex);
       console.log(`  FX  PO ${po} ← ${file.name}`);
     }
   }
