@@ -1,5 +1,7 @@
 require('dotenv').config();
 const { google } = require('googleapis');
+const fs = require('fs');
+const path = require('path');
 
 const SHEET_ID  = '1y0iL7PJldbVQmPIAnJi9wvA2hvjB8_aK2bU2kxvUf5Q';
 const TAB_NAME  = 'Warehouse Now Database';
@@ -63,7 +65,7 @@ async function createShipment(token, { po, to, boxes, dims }) {
         paymentType: 'SENDER',
         payor: { responsibleParty: { accountNumber: { value: process.env.FEDEX_ACCOUNT_NUMBER } } },
       },
-      labelSpecification: { labelFormatType: 'COMMON2D', imageType: 'PDF', labelStockType: 'PAPER_4X6' },
+      labelSpecification: { labelFormatType: 'COMMON2D', imageType: 'ZPLII', labelStockType: 'STOCK_4X6' },
       customerReferences: [{ customerReferenceType: 'CUSTOMER_REFERENCE', value: po }],
       requestedPackageLineItems: packages,
     },
@@ -194,13 +196,17 @@ async function run() {
           labelBuffers.push(Buffer.from(doc.encodedLabel, 'base64'));
         }
       }
-      if (!labelBuffers.length) throw new Error('No label PDF returned by FedEx');
+      if (!labelBuffers.length) throw new Error('No label returned by FedEx');
 
       // Upload each label; store first link in sheet
       let firstLink = null;
       for (let b = 0; b < labelBuffers.length; b++) {
-        const filename = labelBuffers.length === 1 ? `FDEX ${po}.pdf` : `FDEX ${po} BOX${b+1}.pdf`;
+        const filename = labelBuffers.length === 1 ? `FDEX ${po}.zpl` : `FDEX ${po} BOX${b+1}.zpl`;
         const b64      = labelBuffers[b].toString('base64');
+        // Save ZPL locally for certification / debugging
+        const localPath = path.join(__dirname, '..', filename);
+        fs.writeFileSync(localPath, labelBuffers[b]);
+        console.log(`  Saved locally: ${localPath}`);
         const link     = await uploadToAppsScript(b64, filename, month);
         console.log(`  Uploaded: ${filename} → ${link}`);
         if (b === 0) firstLink = link;
